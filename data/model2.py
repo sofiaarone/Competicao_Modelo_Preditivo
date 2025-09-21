@@ -1,32 +1,34 @@
-# import libraries
+import os
 import pandas as pd
-import numpy as np
 from sklearn.model_selection import StratifiedKFold, cross_validate
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-import lightgbm as lgb
+from sklearn.ensemble import RandomForestClassifier
 import matplotlib.pyplot as plt
 import seaborn as sns
+import numpy as np
+import matplotlib
+matplotlib.use('TkAgg')  # for windows interactive plots
 
-# load data
-print("Loading training and test data...")
-train_df = pd.read_csv('../data/train.csv')
-test_df = pd.read_csv('../data/test.csv')
+# find files relative to scripts
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # folder where script is
+train_path = os.path.join(BASE_DIR, 'train.csv')
+test_path = os.path.join(BASE_DIR, 'test.csv')
+
+train_df = pd.read_csv(train_path)
+test_df = pd.read_csv(test_path)
 test_ids = test_df['id']
 
+# prepare data
 X = train_df.drop(columns=['id', 'labels'])
 y = train_df['labels']
 X_test = test_df.drop(columns=['id'])
-print(f"Training data: {X.shape[0]} rows, {X.shape[1]} features")
-print(f"Test data: {X_test.shape[0]} rows, {X_test.shape[1]} features\n")
 
-# identify features
 numerical_features = X.select_dtypes(include=np.number).columns.tolist()
 categorical_features = ['category_code']
 
-# preprocession pipeline
 numerical_transformer = Pipeline([
     ('imputer', SimpleImputer(strategy='median')),
     ('scaler', StandardScaler())
@@ -42,57 +44,43 @@ preprocessor = ColumnTransformer([
     ('cat', categorical_transformer, categorical_features)
 ])
 
-# model setup
-lgbm_model = lgb.LGBMClassifier(
-    objective='binary',
-    class_weight='balanced',
-    random_state=42
-)
-
+rf_model = RandomForestClassifier(n_estimators=200, class_weight='balanced', random_state=42)
 pipeline = Pipeline([
     ('preprocessor', preprocessor),
-    ('classifier', lgbm_model)
+    ('classifier', rf_model)
 ])
 
-# cross-validation metrics
-print("Running 5-fold cross-validation to estimate model performance...")
-
+# cross-validation
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-
 scoring = ['accuracy', 'f1', 'roc_auc']
 cv_results = cross_validate(pipeline, X, y, cv=cv, scoring=scoring, return_train_score=False)
 
-# print per-fold metrics
+print("\nCross-Validation Metrics per Fold")
 for i in range(5):
     print(f"Fold {i+1}: Accuracy={cv_results['test_accuracy'][i]:.3f}, "
           f"F1={cv_results['test_f1'][i]:.3f}, ROC-AUC={cv_results['test_roc_auc'][i]:.3f}")
 
-# print average metrics
-print("\n=== LightGBM Cross-Validation Metrics (Average) ===")
-print(f"Average Accuracy : {np.mean(cv_results['test_accuracy']):.3f}")
-print(f"Average F1-score : {np.mean(cv_results['test_f1']):.3f}")
-print(f"Average ROC-AUC  : {np.mean(cv_results['test_roc_auc']):.3f}\n")
+print("\nAverage Metrics")
+print(f"Accuracy : {np.mean(cv_results['test_accuracy']):.3f}")
+print(f"F1-score : {np.mean(cv_results['test_f1']):.3f}")
+print(f"ROC-AUC  : {np.mean(cv_results['test_roc_auc']):.3f}")
 
-# train model
-print("Training LightGBM on the full training set...")
+# train full model and feature importance
 pipeline.fit(X, y)
-print("Training completed!\n")
-
-# feature importance plot
-print("Generating feature importance plot...")
 feature_names = pipeline.named_steps['preprocessor'].get_feature_names_out()
 importances = pipeline.named_steps['classifier'].feature_importances_
-feat_imp = pd.DataFrame({"Feature": feature_names, "Importance": importances}).sort_values(by='Importance', ascending=False).head(15)
+
+feat_imp = pd.DataFrame({"Feature": feature_names, "Importance": importances}) \
+           .sort_values(by='Importance', ascending=False).head(15)
 
 plt.figure(figsize=(10,6))
 sns.barplot(data=feat_imp, x='Importance', y='Feature', palette='mako')
-plt.title("Top 15 Features - LightGBM")
+plt.title("Top 15 Features - RandomForest")
 plt.tight_layout()
 plt.show()
 
-# predict test data and submission
-print("Making predictions for the test set and creating submission file...")
+# predict test data and save
 test_predictions = pipeline.predict(X_test)
 submission_df = pd.DataFrame({'id': test_ids, 'labels': test_predictions})
-submission_df.to_csv('submission_lightgbm.csv', index=False)
-print("✅ Submission file 'submission_lightgbm.csv' created successfully!")
+submission_df.to_csv(os.path.join(BASE_DIR, 'submission_randomforest.csv'), index=False)
+print("Submission file 'submission_randomforest.csv' created successfully!")
