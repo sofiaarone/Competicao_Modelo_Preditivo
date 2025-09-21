@@ -11,6 +11,10 @@ from sklearn.pipeline import Pipeline
 # para o modelo de Machine Learning
 import lightgbm as lgb
 
+# importing for charts generation
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 print("Bibliotecas importadas com sucesso!")
 
 # carregar os dados
@@ -94,3 +98,81 @@ submission_df = pd.DataFrame({'id': test_ids, 'labels': test_predictions})
 submission_df.to_csv('submission.csv', index=False)
 
 print("O arquivo 'submission.csv' foi criado na pasta atual!")
+
+# target variable distribution
+plt.figure(figsize=(6,4))
+sns.countplot(x=train_df['labels'], palette="Set2")
+plt.title("Target Variable Distribution")
+plt.xlabel("Labels")
+plt.ylabel("Count")
+plt.show()
+
+# top 15 Category Code Distribution
+plt.figure(figsize=(12,6))
+top_categories = train_df['category_code'].value_counts().nlargest(15)
+sns.barplot(x=top_categories.index, y=top_categories.values, palette="viridis")
+plt.title("Top 15 Category Codes Distribution")
+plt.xlabel("Category")
+plt.ylabel("Count")
+plt.xticks(rotation=45, ha="right")
+plt.show()
+
+# correlation Heatmap (numerical features)
+numerical_features = train_df.select_dtypes(include=np.number).columns.tolist()
+
+plt.figure(figsize=(12,10))
+corr = train_df[numerical_features].corr()
+mask = np.triu(np.ones_like(corr, dtype=bool))  # keep only lower triangle
+sns.heatmap(corr, mask=mask, cmap="coolwarm", center=0,
+            annot=False, cbar_kws={"shrink": .8})
+plt.title("Correlation Heatmap (Numerical Features)")
+plt.show()
+
+# feature Importance (LightGBM)
+# features and target
+X = train_df.drop(columns=['id', 'labels'])
+y = train_df['labels']
+
+numerical_features = X.select_dtypes(include=np.number).columns.tolist()
+categorical_features = ['category_code']
+
+# preprocessing
+numerical_transformer = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='median')),
+    ('scaler', StandardScaler())
+])
+
+categorical_transformer = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='most_frequent')),
+    ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+])
+
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('num', numerical_transformer, numerical_features),
+        ('cat', categorical_transformer, categorical_features)
+    ],
+    remainder='passthrough'
+)
+
+# model
+lgbm_model = lgb.LGBMClassifier(objective='binary', class_weight='balanced', random_state=42)
+
+pipeline = Pipeline(steps=[
+    ('preprocessor', preprocessor),
+    ('classifier', lgbm_model)
+])
+
+pipeline.fit(X, y)
+
+# feature importance
+importances = pipeline.named_steps['classifier'].feature_importances_
+feature_names = pipeline.named_steps['preprocessor'].get_feature_names_out()
+
+feat_imp = pd.DataFrame({"Feature": feature_names, "Importance": importances})
+feat_imp = feat_imp.sort_values(by="Importance", ascending=False).head(15)
+
+plt.figure(figsize=(10,6))
+sns.barplot(data=feat_imp, x="Importance", y="Feature", palette="mako")
+plt.title("Top 15 Features - LightGBM Importance")
+plt.show()
